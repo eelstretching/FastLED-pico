@@ -87,7 +87,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 #if FASTLED_RP2040_CLOCKLESS_PIO
     // Get a container for the PIO program and associated state machine and DMA
     // channel, which we'll fill in during init().
-    PIOProgramInfo* pioProgram = new PIOProgramInfo(
+    PIOProgramInfo* ppi = new PIOProgramInfo(
         get_clockless_pio_program(T1, T2, T3), (u8)DATA_PIN, (u8)1);
 
     // increase wait time by time taken to send 4 words (to flush PIO TX buffer)
@@ -150,7 +150,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
    public:
     virtual void init() FL_NO_EXCEPT {
 #if FASTLED_RP2040_CLOCKLESS_PIO
-        if (pioProgram->dma_channel != -1)
+        if (ppi->dma_channel != -1)
             return;  // maybe init was called twice somehow? not sure if
                      // possible
 #endif
@@ -164,16 +164,16 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         max_t = T3 > max_t ? T3 : max_t;
 
         if (max_t > CLOCKLESS_PIO_MAX_TIME_PERIOD) {
-            pioProgram->pio_clock_multiplier =
+            ppi->pio_clock_multiplier =
                 (float)CLOCKLESS_PIO_MAX_TIME_PERIOD / max_t;
-            pioProgram->T1_mult = pioProgram->pio_clock_multiplier * T1;
-            pioProgram->T2_mult = pioProgram->pio_clock_multiplier * T2;
-            pioProgram->T3_mult = pioProgram->pio_clock_multiplier * T3;
+            ppi->T1_mult = ppi->pio_clock_multiplier * T1;
+            ppi->T2_mult = ppi->pio_clock_multiplier * T2;
+            ppi->T3_mult = ppi->pio_clock_multiplier * T3;
         } else {
-            pioProgram->pio_clock_multiplier = 1.f;
-            pioProgram->T1_mult = T1;
-            pioProgram->T2_mult = T2;
-            pioProgram->T3_mult = T3;
+            ppi->pio_clock_multiplier = 1.f;
+            ppi->T1_mult = T1;
+            ppi->T2_mult = T2;
+            ppi->T3_mult = T3;
         }
 
         // This will find a free pio and state machine for our program (whether
@@ -184,8 +184,8 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         // variant) so we will get a PIO instance suitable for addressing gpios
         // >= 32 if needed and supported by the hardware.
         bool success = pio_claim_free_sm_and_add_program_for_gpio_range(
-            pioProgram->pio_program, &pioProgram->mPio, &pioProgram->mSm,
-            &pioProgram->mPioOffset, pioProgram->startPin, pioProgram->numPins,
+            ppi->pio_program, &ppi->mPio, &ppi->mSm,
+            &ppi->mPioOffset, ppi->startPin, ppi->numPins,
             true);
 
         if (!success) {
@@ -198,19 +198,19 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 
         // claim an unused DMA channel (there's 12 in total,, so this should
         // also usually work out fine)
-        pioProgram->dma_channel = dma_claim_unused_channel(false);
-        if (pioProgram->dma_channel == -1) return;  // no free DMA channel
+        ppi->dma_channel = dma_claim_unused_channel(false);
+        if (ppi->dma_channel == -1) return;  // no free DMA channel
 
         // setup PIO state machine
-        pio_gpio_init(pioProgram->mPio, DATA_PIN);
-        pio_sm_set_consecutive_pindirs(pioProgram->mPio, pioProgram->mSm,
-                                       pioProgram->startPin,
-                                       pioProgram->numPins, true);
+        pio_gpio_init(ppi->mPio, DATA_PIN);
+        pio_sm_set_consecutive_pindirs(ppi->mPio, ppi->mSm,
+                                       ppi->startPin,
+                                       ppi->numPins, true);
 
         pio_sm_config c =
-            clockless_pio_program_get_default_config(pioProgram->mPioOffset);
-        sm_config_set_set_pins(&c, pioProgram->startPin, pioProgram->numPins);
-        sm_config_set_out_pins(&c, pioProgram->startPin, pioProgram->numPins);
+            clockless_pio_program_get_default_config(ppi->mPioOffset);
+        sm_config_set_set_pins(&c, ppi->startPin, ppi->numPins);
+        sm_config_set_out_pins(&c, ppi->startPin, ppi->numPins);
         sm_config_set_out_shift(&c, false, true, 32);
 
         // uncommenting this makes the FIFO 8 words long,
@@ -218,21 +218,21 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         // sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
 
         float div = clock_get_hz(clk_sys) /
-                    (pioProgram->pio_clock_multiplier * CLOCKLESS_FREQUENCY);
+                    (ppi->pio_clock_multiplier * CLOCKLESS_FREQUENCY);
         sm_config_set_clkdiv(&c, div);
 
-        pio_sm_init(pioProgram->mPio, pioProgram->mSm, pioProgram->mPioOffset,
+        pio_sm_init(ppi->mPio, ppi->mSm, ppi->mPioOffset,
                     &c);
-        pio_sm_set_enabled(pioProgram->mPio, pioProgram->mSm, true);
+        pio_sm_set_enabled(ppi->mPio, ppi->mSm, true);
 
         // setup DMA
         dma_channel_config channel_config =
-            dma_channel_get_default_config(pioProgram->dma_channel);
+            dma_channel_get_default_config(ppi->dma_channel);
         channel_config_set_dreq(
             &channel_config,
-            pio_get_dreq(pioProgram->mPio, pioProgram->mSm, true));
-        dma_channel_configure(pioProgram->dma_channel, &channel_config,
-                              &pioProgram->mPio->txf[pioProgram->mSm],
+            pio_get_dreq(ppi->mPio, ppi->mSm, true));
+        dma_channel_configure(ppi->dma_channel, &channel_config,
+                              &ppi->mPio->txf[ppi->mSm],
                               nullptr,  // address set when making transfer
                               1,        // count set when making transfer
                               false);   // don't trigger now
@@ -243,7 +243,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         // store a pointer to mWait of this instance to a global array for the
         // interrupt handler kinda dirty hack here to cast to CMinWait<0>*, but
         // only mark is used, which isn't affected by the template var WAIT
-        dma_chan_waits[pioProgram->dma_channel] = (CMinWait<0>*)&mWait;
+        dma_chan_waits[ppi->dma_channel] = (CMinWait<0>*)&mWait;
 
         if (!clockless_isr_installed) {
 #if FASTLED_RP2040_CLOCKLESS_IRQ_SHARED
@@ -257,7 +257,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
             irq_set_enabled(DMA_IRQ_0, true);
             clockless_isr_installed = true;
         }
-        dma_channel_set_irq0_enabled(pioProgram->dma_channel, true);
+        dma_channel_set_irq0_enabled(ppi->dma_channel, true);
 #endif  // FASTLED_RP2040_CLOCKLESS_PIO
     }
 
@@ -265,7 +265,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 
     virtual void showPixels(PixelController<RGB_ORDER>& pixels) FL_NO_EXCEPT {
 #if FASTLED_RP2040_CLOCKLESS_PIO
-        if (pioProgram->dma_channel ==
+        if (ppi->dma_channel ==
             -1) {  // setup failed, so fall back to a blocking implementation
 #if FASTLED_RP2040_CLOCKLESS_M0_FALLBACK
             showRGBBlocking(pixels);
@@ -282,21 +282,21 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         // before waiting, but that would require a smarter DMA buffer system
         // (currently, the gap between LEDs is greater than 50us due to the time
         // taken)
-        if (dma_channel_is_busy(pioProgram->dma_channel)) {
-            dma_channel_wait_for_finish_blocking(pioProgram->dma_channel);
+        if (dma_channel_is_busy(ppi->dma_channel)) {
+            dma_channel_wait_for_finish_blocking(ppi->dma_channel);
         }
         mWait.wait();
 
         // Reset the PIO state machine before starting new transfer to prevent
         // freeze This clears any stale state from the previous transfer (RP2350
         // fix)
-        pio_sm_set_enabled(pioProgram->mPio, pioProgram->mSm, false);
-        pio_sm_clear_fifos(pioProgram->mPio, pioProgram->mSm);
-        pio_sm_restart(pioProgram->mPio, pioProgram->mSm);
-        pio_sm_exec(pioProgram->mPio, pioProgram->mSm,
+        pio_sm_set_enabled(ppi->mPio, ppi->mSm, false);
+        pio_sm_clear_fifos(ppi->mPio, ppi->mSm);
+        pio_sm_restart(ppi->mPio, ppi->mSm);
+        pio_sm_exec(ppi->mPio, ppi->mSm,
                     pio_encode_jmp(
-                        pioProgram->mPioOffset));  // Jump back to program start
-        pio_sm_set_enabled(pioProgram->mPio, pioProgram->mSm, true);
+                        ppi->mPioOffset));  // Jump back to program start
+        pio_sm_set_enabled(ppi->mPio, ppi->mSm, true);
 
         showRGBInternal(pixels);
 #else
@@ -321,19 +321,19 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         // (re)allocate DMA buffer if not large enough to hold req_buf_size
         // 32-bit words pico has enough memory to not really care about using a
         // buffer for DMA just give up on failure
-        if (pioProgram->dma_buf_size < req_buf_size) {
-            if (pioProgram->dma_buf != nullptr) fl::free(pioProgram->dma_buf);
+        if (ppi->dma_buf_size < req_buf_size) {
+            if (ppi->dma_buf != nullptr) fl::free(ppi->dma_buf);
 
-            pioProgram->dma_buf = fl::malloc(req_buf_size * 4);
-            if (pioProgram->dma_buf == nullptr) {
-                pioProgram->dma_buf_size = 0;
+            ppi->dma_buf = fl::malloc(req_buf_size * 4);
+            if (ppi->dma_buf == nullptr) {
+                ppi->dma_buf_size = 0;
                 return;
             }
-            pioProgram->dma_buf_size = req_buf_size;
+            ppi->dma_buf_size = req_buf_size;
 
             // fill with zeroes to ensure XTRA0s are really zero without needing
             // extra work
-            fl::memset(pioProgram->dma_buf, 0, pioProgram->dma_buf_size * 4);
+            fl::memset(ppi->dma_buf, 0, ppi->dma_buf_size * 4);
         }
 
         u32 bitpos = 0;
@@ -352,13 +352,13 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
                 pixels.loadAndScaleRGBW(rgbw, &b0, &b1, &b2, &b3);
 
                 // Write all 4 bytes to buffer
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(pioProgram->dma_buf),
+                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf),
                                                     bitpos, b0);
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(pioProgram->dma_buf),
+                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf),
                                                     bitpos, b1);
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(pioProgram->dma_buf),
+                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf),
                                                     bitpos, b2);
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(pioProgram->dma_buf),
+                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf),
                                                     bitpos, b3);
 
                 pixels.advanceData();
@@ -372,24 +372,24 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
                 pixels.stepDithering();
 
                 // Write first byte, read next byte
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(pioProgram->dma_buf),
+                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf),
                                                     bitpos, b);
                 b = pixels.loadAndScale1();
 
                 // Write second byte, read 3rd byte
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(pioProgram->dma_buf),
+                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf),
                                                     bitpos, b);
                 b = pixels.loadAndScale2();
 
                 // Write third byte, read 1st byte of next pixel
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(pioProgram->dma_buf),
+                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf),
                                                     bitpos, b);
                 b = pixels.advanceAndLoadAndScale0();
             };
         }
 
-        do_dma_transfer(pioProgram->dma_channel, pioProgram->dma_buf,
-                        pioProgram->dma_buf_size);
+        do_dma_transfer(ppi->dma_channel, ppi->dma_buf,
+                        ppi->dma_buf_size);
     }
 #endif  // FASTLED_RP2040_CLOCKLESS_PIO
 
