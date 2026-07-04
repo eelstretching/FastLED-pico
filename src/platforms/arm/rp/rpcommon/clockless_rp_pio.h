@@ -91,8 +91,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
     // increase wait time by time taken to send 4 words (to flush PIO TX buffer)
     CMinWait<WAIT_TIME + ( ((T1 + T2 + T3) * 32 * 4) / (CLOCKLESS_FREQUENCY / 1000000) )> mWait;
 
-    // start a DMA transfer to the PIO state machine from addr (transfer count
-    // 32 bit words)
+    // start a DMA transfer to the PIO state machine from addr (transfer count 32 bit words)
     static void do_dma_transfer(int channel, const void *addr, uint count) FL_NO_EXCEPT {
         dma_channel_set_read_addr(channel, addr, false);
         dma_channel_set_trans_count(channel, count, true);
@@ -102,7 +101,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
     // pico has enough memory to not really care about using a buffer for DMA
     template<int BITS> __attribute__ ((always_inline)) inline static int writeBitsToBuf(i32 *out_buf, u32 bitpos, u8 b) FL_NO_EXCEPT {
         // not really optimised and I haven't checked output assembly, but this should take ~50 cycles worst case
-        //(and on average substantially fewer -- LEDs without XTRA0 should never trigger the second half of the function)
+        // (and on average substantially fewer -- LEDs without XTRA0 should never trigger the second half of the function)
 
         // position of word that takes highest bits (first word used)
         int wordpos_1 = bitpos >> 5; // bitpos / 32;
@@ -125,7 +124,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         int bitshift_2 = 32 - bitcnt_2;
         // mask for output bits that are taken from input
         // int32_t bitmask_2 = ((1 << bitcnt_2) - 1) << bitshift_2;
-        i32 bitmask_2 = ((1 << (bitcnt_2 + (BITS-8))) - 1) << (bitshift_2 - (BITS - 8));  // fixed XTRA0
+        i32 bitmask_2 = ((1 << (bitcnt_2 + (BITS-8))) - 1) << (bitshift_2 - (BITS-8));  // fixed XTRA0
 
         out_buf[wordpos_1 + 1] = (out_buf[wordpos_1 + 1] & ~bitmask_2) | ((b << bitshift_2) & bitmask_2);
 
@@ -137,7 +136,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
    public:
     virtual void init() FL_NO_EXCEPT {
 #if FASTLED_RP2040_CLOCKLESS_PIO
-        if (ppi->dma_channel != -1) return;  // maybe init was called twice somehow? not sure if possible
+        if (ppi->dma_channel != -1) return; // maybe init was called twice somehow? not sure if possible
 #endif
 
         // start by configuring pin as output for blocking fallback
@@ -281,8 +280,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         const bool is_rgbw = rgbw.active();
         const int bytes_per_pixel = is_rgbw ? 4 : 3;
 
-        // Calculate buffer size based on pixel format (RGB = 3 bytes, RGBW = 4
-        // bytes)
+        // Calculate buffer size based on pixel format (RGB = 3 bytes, RGBW = 4 bytes)
         size_t req_buf_size = (pixels.mLen * bytes_per_pixel * (8+XTRA0) + 31) / 32;
 
         // (re)allocate DMA buffer if not large enough to hold req_buf_size 32-bit words
@@ -335,22 +333,22 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
                 pixels.stepDithering();
 
                 // Write first byte, read next byte
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf), bitpos, b);
+                bitpos += writeBitsToBuf<8+XTRA0>((i32*)(ppi->dma_buf), bitpos, b);
                 b = pixels.loadAndScale1();
 
                 // Write second byte, read 3rd byte
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf), bitpos, b);
+                bitpos += writeBitsToBuf<8+XTRA0>((i32*)(ppi->dma_buf), bitpos, b);
                 b = pixels.loadAndScale2();
 
                 // Write third byte, read 1st byte of next pixel
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf), bitpos, b);
+                bitpos += writeBitsToBuf<8+XTRA0>((i32*)(ppi->dma_buf), bitpos, b);
                 b = pixels.advanceAndLoadAndScale0();
             };
         }
 
         do_dma_transfer(ppi->dma_channel, ppi->dma_buf, ppi->dma_buf_size);
     }
-#endif  // FASTLED_RP2040_CLOCKLESS_PIO
+#endif // FASTLED_RP2040_CLOCKLESS_PIO
 
 #if FASTLED_RP2040_CLOCKLESS_M0_FALLBACK
     void showRGBBlocking(PixelController<RGB_ORDER> pixels) FL_NO_EXCEPT {
