@@ -2,7 +2,7 @@
 
 // IWYU pragma: private
 
-/// @file clockless_rp_mPioparallel.h
+/// @file clockless_rp_pio_parallel.h
 /// @brief Parallel clockless LED output controller for RP2040/RP2350 using PIO
 ///
 /// This file provides a high-performance parallel LED strip driver that can control
@@ -182,6 +182,9 @@ public:
             gpio_init(BASE_PIN + i);
             gpio_set_dir(BASE_PIN + i, GPIO_OUT);
         }
+
+        // Get the PIO program for parallel clockless output.
+        
 
         // Try to claim PIO and DMA on actual hardware
         #if defined(FL_IS_RP2040)
