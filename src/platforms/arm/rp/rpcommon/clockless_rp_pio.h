@@ -59,7 +59,7 @@ namespace fl {
 #define FL_CLOCKLESS_CONTROLLER_DEFINED 1
 
 #if FASTLED_RP2040_CLOCKLESS_PIO
-static CMinWait<0>* dma_chan_waits[NUM_DMA_CHANNELS] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static CMinWait<0> *dma_chan_waits[NUM_DMA_CHANNELS] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static inline void __isr clockless_dma_complete_handler() FL_NO_EXCEPT {
     for (u32 i = 0; i < NUM_DMA_CHANNELS; i++) {
         // if dma triggered for this channel and it's been used (has a CMinWait)
@@ -100,14 +100,12 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 
     // writes bits to an in-memory buffer (to DMA from)
     // pico has enough memory to not really care about using a buffer for DMA
-    template <int BITS> __attribute__((always_inline)) inline static int writeBitsToBuf(i32 *out_buf, u32 bitpos, u8 b) FL_NO_EXCEPT {
-        // not really optimised and I haven't checked output assembly, but this
-        // should take ~50 cycles worst case (and on average substantially fewer
-        // -- LEDs without XTRA0 should never trigger the second half of the
-        // function)
+    template<int BITS> __attribute__ ((always_inline)) inline static int writeBitsToBuf(i32 *out_buf, u32 bitpos, u8 b) FL_NO_EXCEPT {
+        // not really optimised and I haven't checked output assembly, but this should take ~50 cycles worst case
+        //(and on average substantially fewer -- LEDs without XTRA0 should never trigger the second half of the function)
 
         // position of word that takes highest bits (first word used)
-        int wordpos_1 = bitpos >> 5;  // bitpos / 32;
+        int wordpos_1 = bitpos >> 5; // bitpos / 32;
 
         // number of bits from the byte that fit into first word
         int bitcnt_1 = 32 - (bitpos & 0b11111); // bitpos % 32;
@@ -115,11 +113,11 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         int bitshift_1 = bitcnt_1 - 8;
         // mask for output bits that are taken from input
         // int32_t bitmask_1 = 0xFF << bitshift_1;
-        i32 bitmask_1 = ((1 << BITS) - 1) << (bitshift_1 - (BITS - 8));
+        i32 bitmask_1 = ((1 << BITS) - 1) << (bitshift_1 - (BITS-8));
 
         out_buf[wordpos_1] = (out_buf[wordpos_1] & ~bitmask_1) | ((b << bitshift_1) & bitmask_1);
 
-        if (bitcnt_1 >= BITS) return BITS;  // fast case for entire byte fitting in word
+        if (bitcnt_1 >= BITS) return BITS; // fast case for entire byte fitting in word
 
         // number of bits from the byte to place into second word
         int bitcnt_2 = 8 - bitcnt_1;
@@ -127,8 +125,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         int bitshift_2 = 32 - bitcnt_2;
         // mask for output bits that are taken from input
         // int32_t bitmask_2 = ((1 << bitcnt_2) - 1) << bitshift_2;
-        i32 bitmask_2 = ((1 << (bitcnt_2 + (BITS - 8))) - 1)
-                        << (bitshift_2 - (BITS - 8));  // fixed XTRA0
+        i32 bitmask_2 = ((1 << (bitcnt_2 + (BITS-8))) - 1) << (bitshift_2 - (BITS - 8));  // fixed XTRA0
 
         out_buf[wordpos_1 + 1] = (out_buf[wordpos_1 + 1] & ~bitmask_2) | ((b << bitshift_2) & bitmask_2);
 
@@ -190,9 +187,9 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 
         // setup PIO state machine
         pio_gpio_init(ppi->mPio, ppi->startPin);
-        pio_sm_set_consecutive_pindirs(ppi->mPio, ppi->mSm,
-                                       ppi->startPin,
-                                       ppi->numPins, true);
+        pio_sm_set_consecutive_pindirs(ppi->mPio, ppi->mSm, ppi->startPin, ppi->numPins, true);
+
+
 
         pio_sm_config c = clockless_pio_program_get_default_config(ppi->mPioOffset);
         sm_config_set_set_pins(&c, ppi->startPin, ppi->numPins);
@@ -219,12 +216,10 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
                               1,        // count set when making transfer
                               false);   // don't trigger now
 
-        // setup DMA complete interrupt handler to update mWait time after
-        // transfer
+        // setup DMA complete interrupt handler to update mWait time after transfer
 
-        // store a pointer to mWait of this instance to a global array for the
-        // interrupt handler kinda dirty hack here to cast to CMinWait<0>*, but
-        // only mark is used, which isn't affected by the template var WAIT
+        // store a pointer to mWait of this instance to a global array for the interrupt handler 
+        // kinda dirty hack here to cast to CMinWait<0>*, but only mark is used, which isn't affected by the template var WAIT
         dma_chan_waits[ppi->dma_channel] = (CMinWait<0>*)&mWait;
 
         if (!clockless_isr_installed) {
@@ -242,10 +237,9 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 
     virtual u16 getMaxRefreshRate() const { return 400; }
 
-    virtual void showPixels(PixelController<RGB_ORDER>& pixels) FL_NO_EXCEPT {
+    virtual void showPixels(PixelController<RGB_ORDER> & pixels) FL_NO_EXCEPT {
 #if FASTLED_RP2040_CLOCKLESS_PIO
-        if (ppi->dma_channel ==
-            -1) {  // setup failed, so fall back to a blocking implementation
+        if (ppi->dma_channel == -1) {  // setup failed, so fall back to a blocking implementation
 #if FASTLED_RP2040_CLOCKLESS_M0_FALLBACK
             showRGBBlocking(pixels);
 #endif
@@ -289,7 +283,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 
         // Calculate buffer size based on pixel format (RGB = 3 bytes, RGBW = 4
         // bytes)
-        size_t req_buf_size = (pixels.mLen * bytes_per_pixel * (8 + XTRA0) + 31) / 32;
+        size_t req_buf_size = (pixels.mLen * bytes_per_pixel * (8+XTRA0) + 31) / 32;
 
         // (re)allocate DMA buffer if not large enough to hold req_buf_size 32-bit words
         //pico has enough memory to not really care about using a buffer for DMA
@@ -320,16 +314,15 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
             while(pixels.has(1)) {
                 pixels.stepDithering();
 
-                // Load all 4 channels (R, G, B, W) with proper color adjustment
-                // and RGBW conversion
+                // Load all 4 channels (R, G, B, W) with proper color adjustment and RGBW conversion
                 u8 b0, b1, b2, b3;
                 pixels.loadAndScaleRGBW(rgbw, &b0, &b1, &b2, &b3);
 
                 // Write all 4 bytes to buffer
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf), bitpos, b0);
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf), bitpos, b1);
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf), bitpos, b2);
-                bitpos += writeBitsToBuf<8 + XTRA0>((i32*)(ppi->dma_buf), bitpos, b3);
+                bitpos += writeBitsToBuf<8+XTRA0>((i32*)(ppi->dma_buf), bitpos, b0);
+                bitpos += writeBitsToBuf<8+XTRA0>((i32*)(ppi->dma_buf), bitpos, b1);
+                bitpos += writeBitsToBuf<8+XTRA0>((i32*)(ppi->dma_buf), bitpos, b2);
+                bitpos += writeBitsToBuf<8+XTRA0>((i32*)(ppi->dma_buf), bitpos, b3);
 
                 pixels.advanceData();
             };
@@ -355,8 +348,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
             };
         }
 
-        do_dma_transfer(ppi->dma_channel, ppi->dma_buf,
-                        ppi->dma_buf_size);
+        do_dma_transfer(ppi->dma_channel, ppi->dma_buf, ppi->dma_buf_size);
     }
 #endif  // FASTLED_RP2040_CLOCKLESS_PIO
 
@@ -375,16 +367,16 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         data.adj = pixels.mAdvance;
 
         typedef FastPin<DATA_PIN> pin;
-        volatile u32* portBase = &sio_hw->gpio_out;
+        volatile u32 *portBase = &sio_hw->gpio_out;
         const int portSetOff = (u32)&sio_hw->gpio_set - (u32)&sio_hw->gpio_out;
         const int portClrOff = (u32)&sio_hw->gpio_clr - (u32)&sio_hw->gpio_out;
 
         cli();
-        showLedData<portSetOff, portClrOff, TIMING, RGB_ORDER, WAIT_TIME>(
-            portBase, pin::mask(), pixels.mData, pixels.mLen, &data);
+        showLedData<portSetOff, portClrOff, TIMING, RGB_ORDER, WAIT_TIME>(portBase, pin::mask(), pixels.mData, pixels.mLen, &data);
         sei();
     }
 #endif
+
 };
 }  // namespace fl
-#endif  // __INC_CLOCKLESS_RP_PIO_COMMON
+#endif // __INC_CLOCKLESS_RP_PIO_COMMON
