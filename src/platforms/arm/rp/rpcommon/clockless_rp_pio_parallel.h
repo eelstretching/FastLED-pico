@@ -106,7 +106,11 @@ template <
     int WAIT_TIME = 280
 >
 class ParallelClocklessController : public CPixelLEDController<RGB_ORDER> {
-private:
+    static constexpr int T1 = (T1_NS * (F_CPU / 1000000UL) + 500) / 1000;
+    static constexpr int T2 = (T2_NS * (F_CPU / 1000000UL) + 500) / 1000;
+    static constexpr int T3 = (T3_NS * (F_CPU / 1000000UL) + 500) / 1000;
+
+   private:
     // Strip information
     struct StripInfo {
         CRGB* leds;
@@ -117,20 +121,15 @@ private:
     StripInfo mStrips[NUM_LANES];
     u16 mMaxLeds;
 
-    // Hardware state
-    PIO mPio;
-    u32 mSm;
-    i32 mDmaChan;
-    u8* mTransposeBuffer;
-    u32 mBufferSize;
+    // PIO program info
+    PIOProgramInfo *ppi = nullptr;
 
     // Timing
     CMinWait<WAIT_TIME + ((T1_NS + T2_NS + T3_NS) * 32 * 4) / 1000> mWait;
 
 public:
     ParallelClocklessController()
-        : mPio(nullptr), mSm(-1), mDmaChan(-1),
-          mTransposeBuffer(nullptr), mBufferSize(0), mMaxLeds(0)
+        : mMaxLeds(0)
     {
         fl::memset(mStrips, 0, sizeof(mStrips));
     }
@@ -138,7 +137,7 @@ public:
     /// @brief Check if the controller was successfully initialized
     /// @return true if initialization successful
     bool isInitialized() const FL_NO_EXCEPT {
-        return (mPio != nullptr && mDmaChan != -1 && mTransposeBuffer != nullptr);
+        return (ppi != nullptr&& ppi->mPio != nullptr && ppi->dma_channel != -1 && ppi->dma_buf != nullptr);
     }
 
     ~ParallelClocklessController() {
@@ -169,13 +168,6 @@ public:
             return;
         }
 
-        // Allocate transposition buffer
-        mBufferSize = mMaxLeds * 24;
-        mTransposeBuffer = fl::bit_cast<u8*>(fl::malloc(mBufferSize));
-        if (mTransposeBuffer == nullptr) {
-            return;
-        }
-
 #if defined(FL_IS_RP2040) || defined(FL_IS_RP2350)
         // Initialize GPIO pins
         for (int i = 0; i < NUM_LANES; i++) {
@@ -183,35 +175,29 @@ public:
             gpio_set_dir(BASE_PIN + i, GPIO_OUT);
         }
 
-        // Get the PIO program for parallel clockless output.
-        
+        ppi = new PIOProgramInfo(T1, T2, T3, BASE_PIN, NUM_LANES);
+        ppi->init(get_clockless_parallel_pio_program(T1, T2, T3));
 
-        // Try to claim PIO and DMA on actual hardware
-        #if defined(FL_IS_RP2040)
-            mPio = pio0;  // Simplified: just use pio0
-        #elif defined(FL_IS_RP2350)
-            mPio = pio0;  // Simplified: just use pio0
-        #endif
-
-        mSm = pio_claim_unused_sm(mPio, false);
-        if (mSm == -1) {
-            fl::free(mTransposeBuffer);
+        // Allocate transposition buffer
+        ppi->dma_buf_size = mMaxLeds * 24;
+        ppi->dma_buf = fl::bit_cast<u8*>(fl::malloc(ppi->dma_buf_size));
+        if (ppi->dma_buf == nullptr) {
             return;
         }
 
-        mDmaChan = dma_claim_unused_channel(false);
-        if (mDmaChan == -1) {
-            pio_sm_unclaim(mPio, mSm);
-            fl::free(mTransposeBuffer);
-            return;
-        }
+        // setup DMA complete interrupt handler to update mWait time after transfer
+
+        // store a pointer to mWait of this instance to a global array for the interrupt handler 
+        // kinda dirty hack here to cast to CMinWait<0>*, but only mark is used, which isn't affected by the template var WAIT
+        dma_chan_waits[ppi->dma_channel] = (CMinWait<0>*)&mWait;
+       
 #endif
     }
 
     /// @brief Output LED data to all strips
     /// @param pixels FastLED PixelController
     virtual void showPixels(PixelController<RGB_ORDER>& pixels) FL_NO_EXCEPT override {
-        if (mPio == nullptr || mTransposeBuffer == nullptr) {
+        if (ppi == nullptr || ppi->mPio == nullptr || ppi->dma_buf == nullptr) {
             return;
         }
 
@@ -220,10 +206,19 @@ public:
         // Prepare transposed data
         prepareTransposedData();
 
+        do_dma_transfer(ppi->dma_channel, ppi->dma_buf, ppi->dma_buf_size);
+
         // In actual implementation, would start DMA here
         // For now, just mark the frame time
 
         mWait.mark();
+    }
+
+    // start a DMA transfer to the PIO state machine from addr (transfer count
+    // 32 bit words)
+    static void do_dma_transfer(int channel, const void* addr, uint count) FL_NO_EXCEPT {
+        dma_channel_set_read_addr(channel, addr, false);
+        dma_channel_set_trans_count(channel, count, true);
     }
 
     /// @brief Get maximum refresh rate
@@ -266,19 +261,19 @@ private:
             case 8:
                 transpose_8strips(
                     fl::bit_cast<const u8* const*>(strip_ptrs),
-                    mTransposeBuffer, mMaxLeds, 3
+                    ppi->dma_buf, mMaxLeds, 3
                 );
                 break;
             case 4:
                 transpose_4strips(
                     fl::bit_cast<const u8* const*>(strip_ptrs),
-                    mTransposeBuffer, mMaxLeds, 3
+                    ppi->dma_buf, mMaxLeds, 3
                 );
                 break;
             case 2:
                 transpose_2strips(
                     fl::bit_cast<const u8* const*>(strip_ptrs),
-                    mTransposeBuffer, mMaxLeds, 3
+                    ppi->dma_buf, mMaxLeds, 3
                 );
                 break;
         }
@@ -289,20 +284,10 @@ private:
     /// @brief Clean up resources
     void cleanup() FL_NO_EXCEPT {
 #if defined(FL_IS_RP2040) || defined(FL_IS_RP2350)
-        if (mDmaChan != -1) {
-            dma_channel_unclaim(mDmaChan);
-            mDmaChan = -1;
-        }
-        if (mSm != -1 && mPio != nullptr) {
-            pio_sm_set_enabled(mPio, mSm, false);
-            pio_sm_unclaim(mPio, mSm);
-            mSm = -1;
-        }
+        ppi->cleanup();
+        delete ppi;
+        ppi = nullptr;
 #endif
-        if (mTransposeBuffer != nullptr) {
-            fl::free(mTransposeBuffer);
-            mTransposeBuffer = nullptr;
-        }
     }
-};
-}  // namespace fl
+}; 
+} // namespace fl

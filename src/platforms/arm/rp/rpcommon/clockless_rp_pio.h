@@ -85,8 +85,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 #if FASTLED_RP2040_CLOCKLESS_PIO
     // Get a container for the PIO program and associated state machine and DMA
     // channel, which we'll fill in during init().
-    PIOProgramInfo* ppi = new PIOProgramInfo(
-        get_clockless_pio_program(T1, T2, T3), (u8)DATA_PIN, (u8)1);
+    PIOProgramInfo *ppi = nullptr;
 
     // increase wait time by time taken to send 4 words (to flush PIO TX buffer)
     CMinWait<WAIT_TIME + ( ((T1 + T2 + T3) * 32 * 4) / (CLOCKLESS_FREQUENCY / 1000000) )> mWait;
@@ -136,82 +135,17 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
    public:
     virtual void init() FL_NO_EXCEPT {
 #if FASTLED_RP2040_CLOCKLESS_PIO
-        if (ppi->dma_channel != -1) return; // maybe init was called twice somehow? not sure if possible
+        if (ppi != nullptr) return; // maybe init was called twice somehow? not sure if possible
 #endif
 
         // start by configuring pin as output for blocking fallback
         FastPin<DATA_PIN>::setOutput();
 
 #if FASTLED_RP2040_CLOCKLESS_PIO
-        // convert from input timebase to one that the PIO program can handle
-        int max_t = T1 > T2 ? T1 : T2;
-        max_t = T3 > max_t ? T3 : max_t;
 
-        if (max_t > CLOCKLESS_PIO_MAX_TIME_PERIOD) {
-            ppi->pio_clock_multiplier = (float)CLOCKLESS_PIO_MAX_TIME_PERIOD / max_t;
-            ppi->T1_mult = ppi->pio_clock_multiplier * T1;
-            ppi->T2_mult = ppi->pio_clock_multiplier * T2;
-            ppi->T3_mult = ppi->pio_clock_multiplier * T3;
-        } else {
-            ppi->pio_clock_multiplier = 1.f;
-            ppi->T1_mult = T1;
-            ppi->T2_mult = T2;
-            ppi->T3_mult = T3;
-        }
-
-        // This will find a free pio and state machine for our program (whether
-        // serial or parallel) and load it for us.
-        //
-        // We use
-        // pio_claim_free_sm_and_add_program_for_gpio_range (for_gpio_range
-        // variant) so we will get a PIO instance suitable for addressing gpios
-        // >= 32 if needed and supported by the hardware.
-        bool success = pio_claim_free_sm_and_add_program_for_gpio_range(
-            ppi->pio_program, &ppi->mPio, &ppi->mSm,
-            &ppi->mPioOffset, ppi->startPin, ppi->numPins,
-            true);
-
-        if (!success) {
-            // failed to claim a PIO and state machine for our program
-            FASTLED_DBG(
-                "Failed to claim a PIO and state machine for clockless "
-                "program");
-            return;
-        }
-
-        // claim an unused DMA channel (there's 12 in total,, so this should
-        // also usually work out fine)
-        ppi->dma_channel = dma_claim_unused_channel(false);
-        if (ppi->dma_channel == -1) return;  // no free DMA channel
-
-        // setup PIO state machine
-        pio_gpio_init(ppi->mPio, ppi->startPin);
-        pio_sm_set_consecutive_pindirs(ppi->mPio, ppi->mSm, ppi->startPin, ppi->numPins, true);
-
-        pio_sm_config c = clockless_pio_program_get_default_config(ppi->mPioOffset);
-        sm_config_set_set_pins(&c, ppi->startPin, ppi->numPins);
-        sm_config_set_out_pins(&c, ppi->startPin, ppi->numPins);
-        sm_config_set_out_shift(&c, false, true, 32);
-
-        // uncommenting this makes the FIFO 8 words long,
-        // which seems like it won't actually benefit us
-        // sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-
-        float div = clock_get_hz(clk_sys) / (ppi->pio_clock_multiplier * CLOCKLESS_FREQUENCY);
-        sm_config_set_clkdiv(&c, div);
-
-        pio_sm_init(ppi->mPio, ppi->mSm, ppi->mPioOffset, &c);
-        pio_sm_set_enabled(ppi->mPio, ppi->mSm, true);
-
-        // setup DMA
-        dma_channel_config channel_config = dma_channel_get_default_config(ppi->dma_channel);
-        channel_config_set_dreq(&channel_config, pio_get_dreq(ppi->mPio, ppi->mSm, true));
-        dma_channel_configure(ppi->dma_channel, 
-                              &channel_config,
-                              &ppi->mPio->txf[ppi->mSm],
-                              nullptr,  // address set when making transfer
-                              1,        // count set when making transfer
-                              false);   // don't trigger now
+        // Initialize PIO, DMA, and buffers
+        ppi = new PIOProgramInfo(T1, T2, T3, DATA_PIN, 1);
+        ppi->init(get_clockless_pio_program(T1, T2, T3));
 
         // setup DMA complete interrupt handler to update mWait time after transfer
 
@@ -255,13 +189,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         }
         mWait.wait();
 
-        // Reset the PIO state machine before starting new transfer to prevent freeze 
-        //This clears any stale state from the previous transfer (RP2350 fix)
-        pio_sm_set_enabled(ppi->mPio, ppi->mSm, false);
-        pio_sm_clear_fifos(ppi->mPio, ppi->mSm);
-        pio_sm_restart(ppi->mPio, ppi->mSm);
-        pio_sm_exec(ppi->mPio, ppi->mSm, pio_encode_jmp(ppi->mPioOffset));  // Jump back to program start
-        pio_sm_set_enabled(ppi->mPio, ppi->mSm, true);
+        ppi->resetSM();
 
         showRGBInternal(pixels);
 #else

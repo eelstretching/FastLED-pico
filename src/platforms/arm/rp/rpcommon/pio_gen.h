@@ -34,7 +34,7 @@
 // destroyed.
 class PIOProgramInfo {
    public:
-    pio_program_t* pio_program;
+    pio_program_t* pio_program = nullptr;
     PIO mPio = nullptr;
     uint mSm = 0;
     uint mPioOffset = 0;
@@ -42,15 +42,38 @@ class PIOProgramInfo {
     void* dma_buf = nullptr;
     size_t dma_buf_size = 0;
     float pio_clock_multiplier;
-    int T1_mult, T2_mult, T3_mult;
+    int T1_mult = 0, T2_mult = 0, T3_mult = 0;
 
     int startPin = 0;
     int numPins = 0;
 
-    PIOProgramInfo(pio_instr *pio_instructions, u8 startPin, u8 numPins) {
-        this->pio_program = new pio_program_t{
-            .instructions = pio_instructions,
-            .length = 4,
+    PIOProgramInfo(int T1, int T2, int T3, u8 startPin, u8 numPins) : startPin(startPin), numPins(numPins) {
+        // convert from input timebase to one that the PIO program can handle
+        int max_t = T1 > T2 ? T1 : T2;
+        max_t = T3 > max_t ? T3 : max_t;
+
+        if (max_t > CLOCKLESS_PIO_MAX_TIME_PERIOD) {
+        pio_clock_multiplier = (float)CLOCKLESS_PIO_MAX_TIME_PERIOD / max_t;
+            T1_mult = pio_clock_multiplier * T1;
+            T2_mult = pio_clock_multiplier * T2;
+            T3_mult = pio_clock_multiplier * T3;
+        } else {
+            pio_clock_multiplier = 1.f;
+            T1_mult = T1;
+            T2_mult = T2;
+            T3_mult = T3;
+        }
+
+    };
+
+    ~PIOProgramInfo() {
+        cleanup();
+    };
+
+    boolean init(std::pair<pio_instr*, u8> pio_instructions) FL_NO_EXCEPT {
+        pio_program = new pio_program_t{
+            .instructions = pio_instructions.first,
+            .length = pio_instructions.second,
             .origin = -1,
 #if defined(PICO_SDK_VERSION_MAJOR) && PICO_SDK_VERSION_MAJOR >= 2
             // pico-sdk 2.x added these two fields to `pio_program`. They are
@@ -77,11 +100,73 @@ class PIOProgramInfo {
 #endif
 #endif
         };
-        this->startPin = startPin;
-        this->numPins = numPins;
+
+        // Find a free PIO and SM for our clockless program. This does all the heavy lifting.
+        bool success = pio_claim_free_sm_and_add_program_for_gpio_range(
+            pio_program, &mPio, &mSm,
+            &mPioOffset, startPin, numPins,
+            true);
+
+        if (!success) {
+            // failed to claim a PIO and state machine for our program
+            FASTLED_DBG(
+                "Failed to claim a PIO and state machine for clockless "
+                "program");
+            return false;
+        }
+
+        // claim an unused DMA channel (there's 12 in total,, so this should
+        // also usually work out fine)
+        dma_channel = dma_claim_unused_channel(false);
+        if (dma_channel == -1) {
+            // Clean up the state machine? WE can still use it without DMA.
+            return false;  // no free DMA channel
+        }
+
+        // setup PIO state machine
+        pio_gpio_init(mPio, startPin);
+        pio_sm_set_consecutive_pindirs(mPio, mSm, startPin, numPins, true);
+
+        pio_sm_config c = pio_get_default_sm_config();
+        sm_config_set_wrap(&c, mPioOffset + CLOCKLESS_PIO_WRAP_TARGET,
+                           mPioOffset + CLOCKLESS_PIO_WRAP);
+        sm_config_set_sideset(&c, CLOCKLESS_PIO_SIDESET_COUNT, false, false);
+
+        sm_config_set_set_pins(&c, startPin, numPins);
+        sm_config_set_out_pins(&c, startPin, numPins);
+        sm_config_set_out_shift(&c, false, true, 32);
+
+        float div = clock_get_hz(clk_sys) / (pio_clock_multiplier * CLOCKLESS_FREQUENCY);
+        sm_config_set_clkdiv(&c, div);
+
+        pio_sm_init(mPio, mSm, mPioOffset, &c);
+        pio_sm_set_enabled(mPio, mSm, true);
+
+        // setup DMA
+        dma_channel_config channel_config = dma_channel_get_default_config(dma_channel);
+        channel_config_set_dreq(&channel_config, pio_get_dreq(mPio, mSm, true));
+        dma_channel_configure(dma_channel, 
+                              &channel_config,
+                              &mPio->txf[mSm],
+                              nullptr,  // address set when making transfer
+                              1,        // count set when making transfer
+                              false);   // don't trigger now
+
+        return true;
     };
 
-    ~PIOProgramInfo() {
+    void resetSM() {
+        // Reset the PIO state machine before starting new transfer to prevent
+        // freeze
+        // This clears any stale state from the previous transfer (RP2350 fix)
+        pio_sm_set_enabled(mPio, mSm, false);
+        pio_sm_clear_fifos(mPio, mSm);
+        pio_sm_restart(mPio, mSm);
+        pio_sm_exec(mPio, mSm, pio_encode_jmp(mPioOffset));  // Jump back to program start
+        pio_sm_set_enabled(mPio, mSm, true);
+    };
+
+    void cleanup() {
         pio_sm_set_enabled(mPio, mSm, false);
         pio_sm_unclaim(mPio, mSm);
         pio_remove_program(mPio, pio_program, mPioOffset);
@@ -102,10 +187,10 @@ class PIOProgramInfo {
         for(int i = 0; i < pio_program->length; i++) {
             Serial1.printf(" Instruction: %d: %xd\n", i, pio_program->instructions[i]);
         }
-    }
+    };
 };
 
-static inline pio_instr* get_clockless_pio_program(int T1, int T2, int T3) FL_NO_EXCEPT {
+static inline std::pair<pio_instr*,u8> get_clockless_pio_program(int T1, int T2, int T3) FL_NO_EXCEPT {
     pio_instr* clockless_pio_instr = new pio_instr[4]{
         // wrap_target
         // out x, 1; read next bit to x
@@ -122,12 +207,10 @@ static inline pio_instr* get_clockless_pio_program(int T1, int T2, int T3) FL_NO
                     PIO_DELAY(T3 - 2, CLOCKLESS_PIO_SIDESET_COUNT)),
         // wrap
     };
-
-    return clockless_pio_instr;
+    return std::make_pair(clockless_pio_instr, 4);
 }
 
-static inline pio_instr* get_clockless_parallel_pio_program(
-    int T1, int T2, int T3) FL_NO_EXCEPT {
+static inline std::pair<pio_instr*,u8> get_clockless_parallel_pio_program(int T1, int T2, int T3) FL_NO_EXCEPT {
     pio_instr* clockless_pio_instr = new pio_instr[4]{
         // wrap_target
         // out x, 8 ; Read 8 bits from the OSR into X, autopulling from the
@@ -147,17 +230,7 @@ static inline pio_instr* get_clockless_parallel_pio_program(
                     PIO_DELAY(T3 - 2, CLOCKLESS_PIO_SIDESET_COUNT)),
         // wrap
     };
-
-    return clockless_pio_instr;
-}
-
-static inline pio_sm_config clockless_pio_program_get_default_config(
-    uint offset) FL_NO_EXCEPT {
-    pio_sm_config c = pio_get_default_sm_config();
-    sm_config_set_wrap(&c, offset + CLOCKLESS_PIO_WRAP_TARGET,
-                       offset + CLOCKLESS_PIO_WRAP);
-    sm_config_set_sideset(&c, CLOCKLESS_PIO_SIDESET_COUNT, false, false);
-    return c;
+    return std::make_pair(clockless_pio_instr, 4);
 }
 
 #endif  // _PIO_GEN_H
