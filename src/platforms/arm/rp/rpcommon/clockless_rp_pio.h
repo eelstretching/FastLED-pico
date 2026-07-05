@@ -138,6 +138,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         if (ppi != nullptr) return; // maybe init was called twice somehow? not sure if possible
 #endif
 
+        Serial1.printf("ClocklessController init: DATA_PIN=%d, T1=%d, T2=%d, T3=%d\n", DATA_PIN, TIMING::T1, TIMING::T2, TIMING::T3);
         // start by configuring pin as output for blocking fallback
         FastPin<DATA_PIN>::setOutput();
 
@@ -145,7 +146,7 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 
         // Initialize PIO, DMA, and buffers
         ppi = new PIOProgramInfo(T1, T2, T3, DATA_PIN, 1);
-        ppi->init(get_clockless_pio_program(T1, T2, T3));
+        ppi->init(get_clockless_pio_program(ppi->T1_mult, ppi->T2_mult, ppi->T3_mult));
 
         // setup DMA complete interrupt handler to update mWait time after transfer
 

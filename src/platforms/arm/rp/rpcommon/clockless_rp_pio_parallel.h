@@ -176,7 +176,7 @@ public:
         }
 
         ppi = new PIOProgramInfo(T1, T2, T3, BASE_PIN, NUM_LANES);
-        ppi->init(get_clockless_parallel_pio_program(T1, T2, T3));
+        ppi->init(get_clockless_parallel_pio_program(ppi->T1_mult, ppi->T2_mult, ppi->T3_mult));
 
         // Allocate transposition buffer
         ppi->dma_buf_size = mMaxLeds * 24;
@@ -206,11 +206,10 @@ public:
         // Prepare transposed data
         prepareTransposedData();
 
+        // DMA to the PIO state machine
         do_dma_transfer(ppi->dma_channel, ppi->dma_buf, ppi->dma_buf_size);
 
-        // In actual implementation, would start DMA here
-        // For now, just mark the frame time
-
+        // Mark the end of the transfer for timing
         mWait.mark();
     }
 
@@ -259,22 +258,13 @@ private:
         // Transpose based on strip count
         switch (NUM_LANES) {
             case 8:
-                transpose_8strips(
-                    fl::bit_cast<const u8* const*>(strip_ptrs),
-                    ppi->dma_buf, mMaxLeds, 3
-                );
+                transpose_8strips(strip_ptrs, (fl::u8 *)ppi->dma_buf, mMaxLeds, 3);
                 break;
             case 4:
-                transpose_4strips(
-                    fl::bit_cast<const u8* const*>(strip_ptrs),
-                    ppi->dma_buf, mMaxLeds, 3
-                );
+                transpose_4strips(strip_ptrs, (fl::u8 *)ppi->dma_buf, mMaxLeds, 3);
                 break;
             case 2:
-                transpose_2strips(
-                    fl::bit_cast<const u8* const*>(strip_ptrs),
-                    ppi->dma_buf, mMaxLeds, 3
-                );
+                transpose_2strips(strip_ptrs, (fl::u8 *)ppi->dma_buf, mMaxLeds, 3);
                 break;
         }
 

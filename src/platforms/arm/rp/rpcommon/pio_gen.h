@@ -41,6 +41,7 @@ class PIOProgramInfo {
     int dma_channel = -1;
     void* dma_buf = nullptr;
     size_t dma_buf_size = 0;
+    dma_channel_transfer_size tsize;
     float pio_clock_multiplier;
     int T1_mult = 0, T2_mult = 0, T3_mult = 0;
 
@@ -62,6 +63,12 @@ class PIOProgramInfo {
             T1_mult = T1;
             T2_mult = T2;
             T3_mult = T3;
+        }
+
+        if(numPins == 1) {
+            tsize = DMA_SIZE_32;
+        } else {
+            tsize = DMA_SIZE_8;
         }
 
     };
@@ -144,7 +151,14 @@ class PIOProgramInfo {
 
         // setup DMA
         dma_channel_config channel_config = dma_channel_get_default_config(dma_channel);
+        // Note that we're using a transfer size based on the number of pins. If
+        // we have more than 1 pin, we use 8-bit transfers, otherwise we use
+        // 32-bit transfers.
+        channel_config_set_transfer_data_size(&channel_config, tsize);
         channel_config_set_dreq(&channel_config, pio_get_dreq(mPio, mSm, true));
+        channel_config_set_read_increment(&channel_config, true);
+        channel_config_set_write_increment(&channel_config, false);
+
         dma_channel_configure(dma_channel, 
                               &channel_config,
                               &mPio->txf[mSm],
@@ -182,10 +196,10 @@ class PIOProgramInfo {
     };
 
     void print() {
-        Serial1.printf("PIOProgramInfo for sm %d dma %d startPin %d numPins %s\n", mSm, dma_channel, startPin, numPins);
-        Serial1.printf("PIO prorgram length %d\n", pio_program->length);
+        Serial1.printf("PIOProgramInfo for sm %d dma %d startPin %d numPins %d\n", mSm, dma_channel, startPin, numPins);
+        Serial1.printf("PIO program length %d\n", pio_program->length);
         for(int i = 0; i < pio_program->length; i++) {
-            Serial1.printf(" Instruction: %d: %xd\n", i, pio_program->instructions[i]);
+            Serial1.printf(" Instruction: %d: %0x\n", i, pio_program->instructions[i]);
         }
     };
 };
@@ -211,6 +225,7 @@ static inline std::pair<pio_instr*,u8> get_clockless_pio_program(int T1, int T2,
 }
 
 static inline std::pair<pio_instr*,u8> get_clockless_parallel_pio_program(int T1, int T2, int T3) FL_NO_EXCEPT {
+
     pio_instr* clockless_pio_instr = new pio_instr[4]{
         // wrap_target
         // out x, 8 ; Read 8 bits from the OSR into X, autopulling from the
