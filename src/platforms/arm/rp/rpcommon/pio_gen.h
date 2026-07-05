@@ -50,7 +50,7 @@ class PIOProgramInfo {
     PIOProgramInfo(pio_instr *pio_instructions, u8 startPin, u8 numPins) {
         this->pio_program = new pio_program_t{
             .instructions = pio_instructions,
-            .length = sizeof(pio_instructions) / sizeof(pio_instructions[0]),
+            .length = 4,
             .origin = -1,
 #if defined(PICO_SDK_VERSION_MAJOR) && PICO_SDK_VERSION_MAJOR >= 2
             // pico-sdk 2.x added these two fields to `pio_program`. They are
@@ -100,7 +100,7 @@ class PIOProgramInfo {
         Serial1.printf("PIOProgramInfo for sm %d dma %d startPin %d numPins %s\n", mSm, dma_channel, startPin, numPins);
         Serial1.printf("PIO prorgram length %d\n", pio_program->length);
         for(int i = 0; i < pio_program->length; i++) {
-            Serial1.printf(" Instruction: %d: %d\n", i, pio_program->instructions[i]);
+            Serial1.printf(" Instruction: %d: %xd\n", i, pio_program->instructions[i]);
         }
     }
 };

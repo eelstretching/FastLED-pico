@@ -219,9 +219,6 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         // kinda dirty hack here to cast to CMinWait<0>*, but only mark is used, which isn't affected by the template var WAIT
         dma_chan_waits[ppi->dma_channel] = (CMinWait<0>*)&mWait;
 
-        Serial1.printf("Claimed sm %d dma %d for pin %d for %d pins\n", ppi->mSm, ppi->dma_channel, ppi->startPin, ppi->numPins);
-        ppi->print();
-
         if (!clockless_isr_installed) {
 #if FASTLED_RP2040_CLOCKLESS_IRQ_SHARED
             irq_add_shared_handler(DMA_IRQ_0, clockless_dma_complete_handler, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
@@ -260,9 +257,6 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 
         // Reset the PIO state machine before starting new transfer to prevent freeze 
         //This clears any stale state from the previous transfer (RP2350 fix)
-        if(ppi->mSm == 0) {
-        Serial1.printf("Resetting state machine: %d\n", ppi->mSm);
-        }
         pio_sm_set_enabled(ppi->mPio, ppi->mSm, false);
         pio_sm_clear_fifos(ppi->mPio, ppi->mSm);
         pio_sm_restart(ppi->mPio, ppi->mSm);
