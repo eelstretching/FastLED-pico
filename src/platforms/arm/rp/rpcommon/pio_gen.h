@@ -95,10 +95,17 @@ class PIOProgramInfo {
             delete pio_program;
         }
     };
+
+    void print() {
+        Serial1.printf("PIOProgramInfo for sm %d dma %d startPin %d numPins %s\n", mSm, dma_channel, startPin, numPins);
+        Serial1.printf("PIO prorgram length %d\n", pio_program->length);
+        for(int i = 0; i < pio_program->length; i++) {
+            Serial1.printf(" Instruction: %d: %d\n", i, pio_program->instructions[i]);
+        }
+    }
 };
 
-static inline pio_instr* get_clockless_pio_program(int T1, int T2,
-                                                   int T3) FL_NO_EXCEPT {
+static inline pio_instr* get_clockless_pio_program(int T1, int T2, int T3) FL_NO_EXCEPT {
     pio_instr* clockless_pio_instr = new pio_instr[4]{
         // wrap_target
         // out x, 1; read next bit to x
