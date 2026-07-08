@@ -147,8 +147,6 @@ class PIOProgramInfo {
         sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
 
         float div = clock_get_hz(clk_sys) / (pio_clock_multiplier * CLOCKLESS_FREQUENCY);
-        Serial1.printf("Clock: %d, PIO clock multiplier: %f, T1_MULT: %d T2_MULT: %d T3_MULT: %d div: %f\n", 
-            clock_get_hz(clk_sys), pio_clock_multiplier, T1_mult, T2_mult, T3_mult, div);
         sm_config_set_clkdiv(&c, div);
 
         pio_sm_init(mPio, mSm, mPioOffset, &c);
