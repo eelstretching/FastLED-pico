@@ -90,12 +90,6 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
     // increase wait time by time taken to send 4 words (to flush PIO TX buffer)
     CMinWait<WAIT_TIME + ( ((T1 + T2 + T3) * 32 * 4) / (CLOCKLESS_FREQUENCY / 1000000) )> mWait;
 
-    // start a DMA transfer to the PIO state machine from addr (transfer count 32 bit words)
-    static void do_dma_transfer(int channel, const void *addr, uint count) FL_NO_EXCEPT {
-        dma_channel_set_read_addr(channel, addr, false);
-        dma_channel_set_trans_count(channel, count, true);
-    }
-
     // writes bits to an in-memory buffer (to DMA from)
     // pico has enough memory to not really care about using a buffer for DMA
     template<int BITS> __attribute__ ((always_inline)) inline static int writeBitsToBuf(i32 *out_buf, u32 bitpos, u8 b) FL_NO_EXCEPT {
@@ -138,7 +132,6 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
         if (ppi != nullptr) return; // maybe init was called twice somehow? not sure if possible
 #endif
 
-        Serial1.printf("ClocklessController init: DATA_PIN=%d, T1=%d, T2=%d, T3=%d\n", DATA_PIN, TIMING::T1, TIMING::T2, TIMING::T3);
         // start by configuring pin as output for blocking fallback
         FastPin<DATA_PIN>::setOutput();
 
@@ -273,7 +266,8 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
             };
         }
 
-        do_dma_transfer(ppi->dma_channel, ppi->dma_buf, ppi->dma_buf_size);
+        dma_channel_set_read_addr(ppi->dma_channel, ppi->dma_buf, false);
+        dma_channel_set_trans_count(ppi->dma_channel, ppi->dma_buf_size, true);
     }
 #endif // FASTLED_RP2040_CLOCKLESS_PIO
 

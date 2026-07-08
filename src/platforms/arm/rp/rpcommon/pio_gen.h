@@ -50,11 +50,10 @@ class PIOProgramInfo {
 
     PIOProgramInfo(int T1, int T2, int T3, u8 startPin, u8 numPins) : startPin(startPin), numPins(numPins) {
         // convert from input timebase to one that the PIO program can handle
-        int max_t = T1 > T2 ? T1 : T2;
-        max_t = T3 > max_t ? T3 : max_t;
+        int max_t = MAX(T3, MAX(T1, T2));
 
         if (max_t > CLOCKLESS_PIO_MAX_TIME_PERIOD) {
-        pio_clock_multiplier = (float)CLOCKLESS_PIO_MAX_TIME_PERIOD / max_t;
+            pio_clock_multiplier = (float) CLOCKLESS_PIO_MAX_TIME_PERIOD / max_t;
             T1_mult = pio_clock_multiplier * T1;
             T2_mult = pio_clock_multiplier * T2;
             T3_mult = pio_clock_multiplier * T3;
@@ -65,12 +64,11 @@ class PIOProgramInfo {
             T3_mult = T3;
         }
 
-        if(numPins == 1) {
+        if (numPins == 1) {
             tsize = DMA_SIZE_32;
         } else {
             tsize = DMA_SIZE_8;
         }
-
     };
 
     ~PIOProgramInfo() {
@@ -132,18 +130,25 @@ class PIOProgramInfo {
 
         // setup PIO state machine
         pio_gpio_init(mPio, startPin);
+        for (uint i = startPin; i < startPin + numPins; i++) {
+            pio_gpio_init(mPio, i);
+            gpio_set_drive_strength(i, GPIO_DRIVE_STRENGTH_4MA);
+        }
+
         pio_sm_set_consecutive_pindirs(mPio, mSm, startPin, numPins, true);
 
         pio_sm_config c = pio_get_default_sm_config();
         sm_config_set_wrap(&c, mPioOffset + CLOCKLESS_PIO_WRAP_TARGET,
                            mPioOffset + CLOCKLESS_PIO_WRAP);
-        sm_config_set_sideset(&c, CLOCKLESS_PIO_SIDESET_COUNT, false, false);
-
-        sm_config_set_set_pins(&c, startPin, numPins);
         sm_config_set_out_pins(&c, startPin, numPins);
-        sm_config_set_out_shift(&c, false, true, 32);
+
+        // Different transfer sizes require different shift.
+        sm_config_set_out_shift(&c, false, true, tsize == DMA_SIZE_32 ? 32 : 8);
+        sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
 
         float div = clock_get_hz(clk_sys) / (pio_clock_multiplier * CLOCKLESS_FREQUENCY);
+        Serial1.printf("Clock: %d, PIO clock multiplier: %f, T1_MULT: %d T2_MULT: %d T3_MULT: %d div: %f\n", 
+            clock_get_hz(clk_sys), pio_clock_multiplier, T1_mult, T2_mult, T3_mult, div);
         sm_config_set_clkdiv(&c, div);
 
         pio_sm_init(mPio, mSm, mPioOffset, &c);
@@ -247,5 +252,4 @@ static inline std::pair<pio_instr*,u8> get_clockless_parallel_pio_program(int T1
     };
     return std::make_pair(clockless_pio_instr, 4);
 }
-
 #endif  // _PIO_GEN_H

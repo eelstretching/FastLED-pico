@@ -190,7 +190,6 @@ public:
         // store a pointer to mWait of this instance to a global array for the interrupt handler 
         // kinda dirty hack here to cast to CMinWait<0>*, but only mark is used, which isn't affected by the template var WAIT
         dma_chan_waits[ppi->dma_channel] = (CMinWait<0>*)&mWait;
-       
 #endif
     }
 
@@ -207,17 +206,11 @@ public:
         prepareTransposedData();
 
         // DMA to the PIO state machine
-        do_dma_transfer(ppi->dma_channel, ppi->dma_buf, ppi->dma_buf_size);
+        dma_channel_set_read_addr(ppi->dma_channel, ppi->dma_buf, false);
+        dma_channel_set_trans_count(ppi->dma_channel, ppi->dma_buf_size, true);
 
         // Mark the end of the transfer for timing
         mWait.mark();
-    }
-
-    // start a DMA transfer to the PIO state machine from addr (transfer count
-    // 32 bit words)
-    static void do_dma_transfer(int channel, const void* addr, uint count) FL_NO_EXCEPT {
-        dma_channel_set_read_addr(channel, addr, false);
-        dma_channel_set_trans_count(channel, count, true);
     }
 
     /// @brief Get maximum refresh rate
@@ -267,7 +260,6 @@ private:
                 transpose_2strips(strip_ptrs, (fl::u8 *)ppi->dma_buf, mMaxLeds, 3);
                 break;
         }
-
         fl::free(padded_rgb);
     }
 
