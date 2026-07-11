@@ -39,7 +39,7 @@ static inline int nanoseconds_to_cycles(float ns) FL_NO_EXCEPT {
 // channel for a clockless LED controller. This will let us easily delete the
 // program and free the state machine and DMA channel when the controller is
 // destroyed.
-class PIOProgramInfo {
+template<u8 DATA_PIN, u8 NUM_PINS, typename TIMING> class PIOProgramInfo {
    public:
     pio_program_t* pio_program = nullptr;
     PIO mPio = nullptr;
@@ -50,25 +50,27 @@ class PIOProgramInfo {
     size_t dma_buf_size = 0;
     dma_channel_transfer_size tsize;
     float pio_clock_multiplier;
+
+    // timings in nanoseconds and clock cycles
     int T1_ns = 0, T2_ns = 0, T3_ns = 0;
     int T1_cyc = 0, T2_cyc = 0, T3_cyc = 0;
 
-    int startPin = 0;
-    int numPins = 0;
+    CMinWait<TIMING::RESET + ( ((TIMING::T1 + TIMING::T2 + TIMING::T3) * 32 * 4) / (CLOCKLESS_FREQUENCY / 1000000) )> mWait;
 
-    PIOProgramInfo(int T1_ns, int T2_ns, int T3_ns, int waitTime, u8 startPin, u8 numPins) : T1_ns(T1_ns), T2_ns(T2_ns), T3_ns(T3_ns), startPin(startPin), numPins(numPins) {
+    PIOProgramInfo() {
         // convert from input timebase (nanoseconds) to the number of clock cycles at the current CPU frequency
         // convert from input timebase to one that the PIO program can handle
+        T1_ns = TIMING::T1;
+        T2_ns = TIMING::T2;
+        T3_ns = TIMING::T3;
         T1_cyc = nanoseconds_to_cycles(T1_ns);
         T2_cyc = nanoseconds_to_cycles(T2_ns);
         T3_cyc = nanoseconds_to_cycles(T3_ns);
-        
+
         int max_t = MAX(T3_cyc, MAX(T1_cyc, T2_cyc));
 
         if (max_t > CLOCKLESS_PIO_MAX_DELAY) {
-            // We need to set a divider on the PIO clock to slow it down so that the longest delay fits in the instruction encoding.
             pio_clock_multiplier = (float) CLOCKLESS_PIO_MAX_DELAY / max_t;
-            
             T1_cyc = pio_clock_multiplier * T1_cyc;
             T2_cyc = pio_clock_multiplier * T2_cyc;
             T3_cyc = pio_clock_multiplier * T3_cyc;
@@ -79,12 +81,11 @@ class PIOProgramInfo {
         Serial1.printf("PIO clock multiplier: %f, T1_ns: %d T1_cyc: %d, T2_ns: %d T2_cyc: %d, T3_ns: %d T3_cyc: %d\n", 
             pio_clock_multiplier, T1_ns, T1_cyc, T2_ns, T2_cyc, T3_ns, T3_cyc);
 
-        if (numPins == 1) {
+        if (NUM_PINS == 1) {
             tsize = DMA_SIZE_32;
         } else {
             tsize = DMA_SIZE_8;
         }
-
     };
 
     ~PIOProgramInfo() {
@@ -125,7 +126,7 @@ class PIOProgramInfo {
         // Find a free PIO and SM for our clockless program. This does all the heavy lifting.
         bool success = pio_claim_free_sm_and_add_program_for_gpio_range(
             pio_program, &mPio, &mSm,
-            &mPioOffset, startPin, numPins,
+            &mPioOffset, DATA_PIN, NUM_PINS,
             true);
 
         if (!success) {
@@ -145,18 +146,19 @@ class PIOProgramInfo {
         }
 
         // setup PIO state machine
-        pio_gpio_init(mPio, startPin);
-        for (uint i = startPin; i < startPin + numPins; i++) {
+        for (uint i = DATA_PIN; i < DATA_PIN + NUM_PINS; i++) {
             pio_gpio_init(mPio, i);
+            gpio_set_dir(i, GPIO_OUT);
             gpio_set_drive_strength(i, GPIO_DRIVE_STRENGTH_4MA);
         }
 
-        pio_sm_set_consecutive_pindirs(mPio, mSm, startPin, numPins, true);
+        pio_sm_set_consecutive_pindirs(mPio, mSm, DATA_PIN, NUM_PINS, true);
 
         pio_sm_config c = pio_get_default_sm_config();
         sm_config_set_wrap(&c, mPioOffset + CLOCKLESS_PIO_WRAP_TARGET,
                            mPioOffset + CLOCKLESS_PIO_WRAP);
-        sm_config_set_out_pins(&c, startPin, numPins);
+        sm_config_set_set_pins(&c, DATA_PIN, NUM_PINS);
+        sm_config_set_out_pins(&c, DATA_PIN, NUM_PINS);
 
         // Different transfer sizes require different shift.
         sm_config_set_out_shift(&c, false, true, tsize == DMA_SIZE_32 ? 32 : 8);
@@ -165,11 +167,11 @@ class PIOProgramInfo {
         float div = clock_get_hz(clk_sys) / (pio_clock_multiplier * CLOCKLESS_FREQUENCY);
         sm_config_set_clkdiv(&c, div);
 
-        printf("clock: %d cycles: %d div: %f\n", clock_get_hz(clk_sys),
+        Serial1.printf("clock: %d cycles: %d div: %f\n", clock_get_hz(clk_sys),
                T1_cyc+T2_cyc+T3_cyc, div);
         float cycle_time = 1000000000.0 / (clock_get_hz(clk_sys) / div);
-        printf("state machine cycle is: %.1fns\n", cycle_time);
-        printf("T1: %d %.1f T2: %d %.1f T3: %d %.1f\n", T1_cyc, T1_cyc * cycle_time, T2_cyc, T2_cyc * cycle_time, T3_cyc, T3_cyc * cycle_time);
+        Serial1.printf("state machine cycle is: %.1fns\n", cycle_time);
+        Serial1.printf("T1: %d %.1f T2: %d %.1f T3: %d %.1f\n", T1_cyc, T1_cyc * cycle_time, T2_cyc, T2_cyc * cycle_time, T3_cyc, T3_cyc * cycle_time);
 
         pio_sm_init(mPio, mSm, mPioOffset, &c);
         pio_sm_set_enabled(mPio, mSm, true);
@@ -221,7 +223,7 @@ class PIOProgramInfo {
     };
 
     void print() {
-        Serial1.printf("PIOProgramInfo for sm %d dma %d startPin %d numPins %d\n", mSm, dma_channel, startPin, numPins);
+        Serial1.printf("PIOProgramInfo for sm %d dma %d DATA_PIN %d NUM_PINS %d\n", mSm, dma_channel, DATA_PIN, NUM_PINS);
         Serial1.printf("PIO program length %d\n", pio_program->length);
         for(int i = 0; i < pio_program->length; i++) {
             Serial1.printf(" Instruction: %d: %0x\n", i, pio_program->instructions[i]);
