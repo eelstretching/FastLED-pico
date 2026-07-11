@@ -75,20 +75,13 @@ static bool clockless_isr_installed = false;
 
 template <u8 DATA_PIN, typename TIMING, EOrder RGB_ORDER = RGB, int XTRA0 = 0, bool FLIP = false, int WAIT_TIME = 280>
 class ClocklessController : public CPixelLEDController<RGB_ORDER> {
-    // Extract timing values from struct and convert from nanoseconds to clock cycles 
-    // Formula: cycles = (nanoseconds * CPU_MHz + 500) / 1000
-    // The +500 provides rounding to nearest integer
-    static constexpr int T1 = (TIMING::T1 * (F_CPU / 1000000UL) + 500) / 1000;
-    static constexpr int T2 = (TIMING::T2 * (F_CPU / 1000000UL) + 500) / 1000;
-    static constexpr int T3 = (TIMING::T3 * (F_CPU / 1000000UL) + 500) / 1000;
-
 #if FASTLED_RP2040_CLOCKLESS_PIO
     // Get a container for the PIO program and associated state machine and DMA
     // channel, which we'll fill in during init().
     PIOProgramInfo *ppi = nullptr;
 
     // increase wait time by time taken to send 4 words (to flush PIO TX buffer)
-    CMinWait<WAIT_TIME + ( ((T1 + T2 + T3) * 32 * 4) / (CLOCKLESS_FREQUENCY / 1000000) )> mWait;
+    CMinWait<WAIT_TIME + ( ((TIMING::T1 + TIMING::T2 + TIMING::T3) * 32 * 4) / (CLOCKLESS_FREQUENCY / 1000000) )> mWait;
 
     // writes bits to an in-memory buffer (to DMA from)
     // pico has enough memory to not really care about using a buffer for DMA
@@ -138,8 +131,10 @@ class ClocklessController : public CPixelLEDController<RGB_ORDER> {
 #if FASTLED_RP2040_CLOCKLESS_PIO
 
         // Initialize PIO, DMA, and buffers
-        ppi = new PIOProgramInfo(T1, T2, T3, DATA_PIN, 1);
-        ppi->init(get_clockless_pio_program(ppi->T1_mult, ppi->T2_mult, ppi->T3_mult));
+        ppi = new PIOProgramInfo(TIMING::T1, TIMING::T2, TIMING::T3, DATA_PIN, 1);
+        ppi->init(get_clockless_pio_program(ppi->T1_cyc, ppi->T2_cyc, ppi->T3_cyc));
+
+        ppi->print();
 
         // setup DMA complete interrupt handler to update mWait time after transfer
 

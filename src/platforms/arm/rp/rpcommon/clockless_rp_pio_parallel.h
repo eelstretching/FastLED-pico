@@ -106,9 +106,6 @@ template <
     int WAIT_TIME = 280
 >
 class ParallelClocklessController : public CPixelLEDController<RGB_ORDER> {
-    static constexpr int T1 = (T1_NS * (F_CPU / 1000000UL) + 500) / 1000;
-    static constexpr int T2 = (T2_NS * (F_CPU / 1000000UL) + 500) / 1000;
-    static constexpr int T3 = (T3_NS * (F_CPU / 1000000UL) + 500) / 1000;
 
    private:
     // Strip information
@@ -153,6 +150,7 @@ public:
         if (lane >= NUM_LANES || leds == nullptr) {
             return false;
         }
+
         mStrips[lane].leds = leds;
         mStrips[lane].num_leds = num_leds;
         mStrips[lane].enabled = true;
@@ -175,8 +173,8 @@ public:
             gpio_set_dir(BASE_PIN + i, GPIO_OUT);
         }
 
-        ppi = new PIOProgramInfo(T1, T2, T3, BASE_PIN, NUM_LANES);
-        ppi->init(get_clockless_parallel_pio_program(ppi->T1_mult, ppi->T2_mult, ppi->T3_mult));
+        ppi = new PIOProgramInfo(T1_NS, T2_NS, T3_NS, WAIT_TIME, BASE_PIN, NUM_LANES);
+        ppi->init(get_clockless_parallel_pio_program(ppi->T1_cyc, ppi->T2_cyc, ppi->T3_cyc));
 
         // Allocate transposition buffer
         ppi->dma_buf_size = mMaxLeds * 24;
